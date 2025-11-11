@@ -1,3 +1,6 @@
+# Theres snakes on the motherfucking plane!
+# so we wrote you a little song for the KT2 Turtle
+
 from machine import Pin, PWM
 import time
 
