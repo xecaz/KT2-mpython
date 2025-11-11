@@ -1,0 +1,28 @@
+ Smallest possible buzzer code (3 lines to play a tone)
+
+--
+from machine import Pin, PWM
+pwm = PWM(Pin(38)); pwm.freq(1000); pwm.duty_u16(30000)
+--
+
+That plays a 1 kHz tone.
+
+To stop it:
+--
+pwm.deinit()
+--
+
+ Minimal function version (still tiny)
+from machine import Pin, PWM
+
+def tone(freq, ms):
+    pwm = PWM(Pin(38))
+    pwm.freq(freq)
+    pwm.duty_u16(30000)
+    time.sleep_ms(ms)
+    pwm.deinit()
+
+
+Call it like:
+
+tone(440, 500)  # A4 for half a second
