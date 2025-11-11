@@ -1,0 +1,57 @@
+from machine import Pin, bitstream
+import time
+
+PIN = 47
+N = 10
+
+# WS2812 timing
+T0H, T0L = 400, 850
+T1H, T1L = 800, 450
+
+pin = Pin(PIN, Pin.OUT)
+buf = bytearray(N * 3)
+
+def show():
+    bitstream(pin, 0, (T0H, T0L, T1H, T1L), buf)
+    time.sleep_us(80)
+
+def set_led(i, r, g, b):
+    p = i * 3
+    buf[p]   = g
+    buf[p+1] = r
+    buf[p+2] = b
+
+def clear():
+    for i in range(N):
+        set_led(i,0,0,0)
+
+def knight_rider(speed=0.04, tail=3):
+    pos = 0
+    direction = 1
+
+    while True:
+        clear()
+
+        # head
+        set_led(pos, 255, 0, 0)
+
+        # tail glow
+        for t in range(1, tail+1):
+            fade_pos = pos - t*direction
+            if 0 <= fade_pos < N:
+                intensity = max(0, 180 - t*60)
+                set_led(fade_pos, intensity, 0, 0)
+
+        show()
+        time.sleep(speed)
+
+        # move
+        pos += direction
+
+        # bounce off ends
+        if pos >= N-1 or pos <= 0:
+            direction = -direction
+
+# Run it
+knight_rider()
+
