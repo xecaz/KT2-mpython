@@ -1,0 +1,39 @@
+from machine import Pin, bitstream
+import time
+
+PIN = 47          # LED data pin
+N = 10            # number of LEDs
+T0H, T0L = 400, 850
+T1H, T1L = 800, 450
+
+pin = Pin(PIN, Pin.OUT)
+
+def send(buf):
+    # WS2812 expects GRB order
+    bitstream(pin, 0, (T0H, T0L, T1H, T1L), buf)
+    time.sleep_us(80)  # latch/reset
+
+def fill(r, g, b):
+    # convert to GRB repeated N times
+    data = bytes([g, r, b] * N)
+    send(data)
+
+
+print("Blinky blinky mofo!")
+
+fill(50, 0, 0)     # red
+time.sleep(0.5)
+
+fill(0, 50, 0)     # green
+time.sleep(0.5)
+
+fill(0, 0, 50)     # blue
+time.sleep(0.5)
+
+fill(50, 50, 50)   # white
+time.sleep(0.5)
+
+fill(0, 0, 0)      # off
+
+print("Done!")
+
