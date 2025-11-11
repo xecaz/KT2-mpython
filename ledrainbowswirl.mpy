@@ -1,0 +1,52 @@
+from machine import Pin, bitstream
+import time
+import math
+
+PIN = 47
+N = 10
+
+T0H, T0L = 400, 850
+T1H, T1L = 800, 450
+
+pin = Pin(PIN, Pin.OUT)
+buf = bytearray(N * 3)
+
+def show():
+    bitstream(pin, 0, (T0H, T0L, T1H, T1L), buf)
+    time.sleep_us(80)
+
+def set_led(i, r, g, b):
+    p = i * 3
+    buf[p]   = g
+    buf[p+1] = r
+    buf[p+2] = b
+
+def hsv_to_rgb(h, s, v):
+    i = int(h * 6)
+    f = (h * 6) - i
+    p = v * (1 - s)
+    q = v * (1 - f*s)
+    t = v * (1 - (1-f)*s)
+    i %= 6
+    if i == 0: r, g, b = v, t, p
+    elif i == 1: r, g, b = q, v, p
+    elif i == 2: r, g, b = p, v, t
+    elif i == 3: r, g, b = p, q, v
+    elif i == 4: r, g, b = t, p, v
+    elif i == 5: r, g, b = v, p, q
+    return int(r*255), int(g*255), int(b*255)
+
+def rainbow_swirl(speed=0.03, spread=0.15):
+    t = 0.0
+    while True:
+        for i in range(N):
+            hue = (t + i*spread) % 1.0
+            r, g, b = hsv_to_rgb(hue, 1.0, 0.5)
+            set_led(i, r, g, b)
+        show()
+        t += speed
+        if t >= 1:
+            t -= 1
+
+rainbow_swirl()
+
