@@ -1,15 +1,18 @@
-from machine import Pin, bitstream
+from machine import Pin, PWM, bitstream
 import time
+import _thread
+
 
 PIN = 47
-N = 10
+N = 10  
 
-# WS2812 timing
 T0H, T0L = 400, 850
 T1H, T1L = 800, 450
 
 pin = Pin(PIN, Pin.OUT)
 buf = bytearray(N * 3)
+
+running = True  
 
 def show():
     bitstream(pin, 0, (T0H, T0L, T1H, T1L), buf)
@@ -23,35 +26,76 @@ def set_led(i, r, g, b):
 
 def clear():
     for i in range(N):
-        set_led(i,0,0,0)
+        set_led(i, 0, 0, 0)
 
-def knight_rider(speed=0.04, tail=3):
+def knight_rider_lights(speed=0.04, tail=3):
+    global running
     pos = 0
     direction = 1
-
-    while True:
+    while running:
         clear()
-
-        # head
         set_led(pos, 255, 0, 0)
-
-        # tail glow
         for t in range(1, tail+1):
             fade_pos = pos - t*direction
             if 0 <= fade_pos < N:
                 intensity = max(0, 180 - t*60)
                 set_led(fade_pos, intensity, 0, 0)
-
         show()
         time.sleep(speed)
-
-        # move
         pos += direction
-
-        # bounce off ends
         if pos >= N-1 or pos <= 0:
             direction = -direction
+    clear()
+    show()
 
-# Run it
-knight_rider()
+
+BUZ_PIN = 38
+
+N_FREQ = {
+    "C5": 523, "CS5": 554, "D5": 587, "DS5": 622, "E5": 659,
+    "F5": 698, "FS5": 740, "G5": 784, "GS5": 831, "A5": 880,
+    "AS5": 932, "B5": 988, "C6": 1047, "CS6": 1109, "D6": 1175,
+    "DS6": 1245, "E6": 1319, "F6": 1397, "FS6": 1480, "G6": 1568,
+    "GS6": 1661, "A6": 1760,
+}
+
+R = 0
+
+melody = [
+    ("F5", 1), ("AS5", 1), ("F5", 1), ("AS5", 1),
+    ("F5", 1), ("AS5", 1), ("F5", 1), ("AS5", 1),
+    ("F5", 1), ("A5", 1), ("F5", 1), ("A5", 1),
+    ("F5", 1), ("A5", 1), ("F5", 1), ("A5", 1),
+    (R, 2),
+    ("A5", 1), ("C6", 1), ("F6", 2),
+    ("A5", 1), ("C6", 1), ("F6", 2)
+]
+
+tempo = 0.17
+
+def play(note, beats):
+    if note == R:
+        time.sleep(beats * tempo)
+        return
+    freq = N_FREQ[note]
+    pwm = PWM(Pin(BUZ_PIN))
+    pwm.freq(freq)
+    pwm.duty_u16(32000)
+    time.sleep(beats * tempo)
+    pwm.deinit()
+
+def knight_rider_sound():
+    for note, beats in melody:
+        play(note, beats)
+    Pin(BUZ_PIN, Pin.IN)
+
+
+_thread.start_new_thread(knight_rider_lights, ()) 
+knight_rider_sound() 
+
+running = False
+time.sleep(0.2)
+clear()
+show()
+
 
