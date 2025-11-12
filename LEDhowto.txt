@@ -1,0 +1,65 @@
+How KT2's LEDs work
+
+The LEDs are WS2812-style addressable RGB LEDs (10 of them).
+
+They’re driven through a single data pin: GPIO 47.
+
+WS2812 LEDs use GRB byte order, not RGB.
+
+MicroPython normally uses the neopixel module, but this ones dones. 
+
+Instead, the firmware exposes machine.bitstream, which can send the WS2812 timing waveform directly.
+
+I hacked together a tiny buffer (bytearray) of 10 × 3 bytes and send it through bitstream to update the strip.
+
+Each LED is set by writing into the buffer at index i * 3 (because 3 bytes per LED).
+
+That’s the whole system in one breath.
+
+
+Examples:
+
+from time import sleep
+--
+for i in range(10):
+    # turn all off
+    for j in range(10):
+        set_led(j, 0, 0, 0)
+
+    # light the selected pixel
+    set_led(i, 255, 0, 0)   # pure red
+    show()
+    sleep(0.2)
+--
+As you can see the order is a bit messed up.. Needs mapping
+
+-- 
+
+3 leds in different colors
+--
+# clear
+for i in range(10):
+    set_led(i, 0, 0, 0)
+
+set_led(0, 0, 0, 255)   # blue
+set_led(5, 0, 255, 0)   # green
+set_led(9, 255, 0, 0)   # red
+
+show()
+--
+Simple chase effect:
+
+--
+
+from time import sleep
+
+while True:
+    for pos in range(10):
+        for i in range(10):
+            set_led(i, 0, 0, 0)
+
+        set_led(pos, 255, 50, 0)   # orange dot
+        show()
+        sleep(0.05)
+
+--
