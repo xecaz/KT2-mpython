@@ -63,3 +63,21 @@ while True:
         sleep(0.05)
 
 --
+
+Playing with brightness:
+
+-- 
+import math, time
+
+t = 0
+while True:
+    for i in range(N):
+        brightness = (math.sin(t + i*0.4) + 1) / 2   # 0 to 1 wave
+        set_led(i, 0, 0, 255, brightness)           # blue pulse
+    show()
+    t += 0.15
+    time.sleep(0.03)
+
+--
+
+
