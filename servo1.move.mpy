@@ -1,0 +1,50 @@
+from machine import Pin, PWM
+import time
+
+print("\n=== SERVO1 DIRECTION TEST (HARD RESET VERSION) ===\n")
+
+INA = 11
+INB = 12
+
+# --- HARD RESET SEQUENCE ---
+print("Resetting H-bridge...")
+
+# Step 1: configure as digital out & force both LOW
+ina_pin = Pin(INA, Pin.OUT)
+inb_pin = Pin(INB, Pin.OUT)
+
+ina_pin.value(0)
+inb_pin.value(0)
+
+# Step 2: wait for driver reset release
+time.sleep(0.05)   # 50 ms recommended
+
+print("Reset complete.\n")
+
+# --- Now safely enable PWM on INA ---
+pwm = PWM(ina_pin)
+pwm.freq(5000)
+pwm.duty_u16(30000)
+
+# --- Run direction tests ---
+print("DIR=0 for 2 seconds...")
+inb_pin.value(0)
+time.sleep(2)
+
+print("DIR=1 for 2 seconds...")
+inb_pin.value(1)
+time.sleep(2)
+
+print("DIR=0 for 2 seconds...")
+inb_pin.value(0)
+time.sleep(2)
+
+# --- STOP ---
+print("STOP")
+pwm.duty_u16(0)
+ina_pin.value(0)
+inb_pin.value(0)
+time.sleep(0.05)
+
+print("\n=== DONE ===\n")
+
