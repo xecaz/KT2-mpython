@@ -1,0 +1,60 @@
+from machine import I2S, Pin
+import math, struct, time
+
+# ===========================
+#  I2S SETUP FOR KT2 SPEAKER
+# ===========================
+audio = I2S(
+    0,
+    sck=Pin(0),      # BCLK
+    ws=Pin(42),      # LRCLK / WS
+    sd=Pin(45),      # SDATA
+    mode=I2S.TX,
+    bits=16,
+    format=I2S.MONO,
+    rate=16000,
+    ibuf=4000,
+)
+
+# ===========================
+#  SIMPLE ROBOT VOICE ENGINE
+# ===========================
+
+sample_rate = 16000
+
+# Each character → base tone frequency (Hz)
+phoneme_map = {
+    'a': 440, 'b': 220, 'c': 330, 'd': 260, 'e': 520, 'f': 300,
+    'g': 240, 'h': 180, 'i': 600, 'j': 200, 'k': 280, 'l': 310,
+    'm': 150, 'n': 160, 'o': 480, 'p': 210, 'q': 230, 'r': 350,
+    's': 400, 't': 370, 'u': 500, 'v': 290, 'w': 340, 'x': 360,
+    'y': 450, 'z': 390,
+    ' ': 0,
+}
+
+def speak_robot(text):
+    text = text.lower()
+    print("Speaking:", text)
+
+    for ch in text:
+        freq = phoneme_map.get(ch, 300)  # default fallback tone
+        duration = 0.12  # 120 ms per character
+
+        samples = int(sample_rate * duration)
+        buf = bytearray()
+
+        if freq == 0:
+            # short silence for spaces
+            buf = bytearray([0]* (samples*2))
+        else:
+            for n in range(samples):
+                # A robotic metallic timbre = mix of sine + clipped pulse
+                s = math.sin(2*math.pi*freq*(n/sample_rate))
+                p = 1.0 if (n % (sample_rate//freq)) < ((sample_rate//freq)//2) else -1.0
+                sample = int((s*0.5 + p*0.3) * 12000)
+                buf += struct.pack("<h", sample)
+
+        audio.write(buf)
+
+    print("Done.")
+
