@@ -1,0 +1,27 @@
+import imu, time
+
+print("KT2 IMU — derived face detection (using acceleration as i cant get the get_face() working ;) )\n")
+
+while True:
+    try:
+        ax, ay, az = imu.get_acc()
+
+        # pick axis with largest magnitude
+        vals = [abs(ax), abs(ay), abs(az)]
+        axis = vals.index(max(vals))
+        sign = (ax, ay, az)[axis] > 0
+
+        if axis == 0:
+            face = "LEFT UP" if sign else "RIGHT UP"
+        elif axis == 1:
+            face = "FRONT UP" if sign else "ASS UP"
+        else:
+            face = "TOP UP" if sign else "BOTTOM UP"
+
+        print("ACC: X=%6.2f Y=%6.2f Z=%6.2f  =>  %s" % (ax, ay, az, face))
+        time.sleep(0.3)
+
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        break
+
