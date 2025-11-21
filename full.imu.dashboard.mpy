@@ -1,0 +1,44 @@
+import imu, time, math
+
+print("KT2 Robot — Motion Dashboard v5 so much data you get a semi.. \n")
+
+samples = [imu.get_acc()[1] for _ in range(50)]
+baseline_y = sum(samples) / len(samples)
+print("Baseline Y-acc (g):", baseline_y)
+
+velocity = 0.0
+t_prev = time.ticks_ms()
+
+while True:
+    try:
+        ax, ay, az = imu.get_acc()
+        gx, gy, gz = imu.get_gyro()
+        roll, pitch, yaw = imu.get_rpy()
+
+        ay_corr = ay - baseline_y
+
+        t_now = time.ticks_ms()
+        dt = time.ticks_diff(t_now, t_prev) / 1000.0
+        t_prev = t_now
+        velocity += (ay_corr * 9.81) * dt
+
+        motion_intensity = abs(math.sqrt(ax*ax + ay*ay + az*az) - 1.0)
+        if motion_intensity < 0.015:
+            velocity = 0.0
+
+        speed = abs(velocity)
+
+        print(
+            "ACC: X=%6.2f Y=%6.2f Z=%6.2f | "
+            "GYRO: X=%6.2f Y=%6.2f Z=%6.2f | "
+            "RPY: %6.1f %6.1f %6.1f | "
+            "Speed≈%6.3f m/s | Intensity=%.3f"
+            % (ax, ay, az, gx, gy, gz, roll, pitch, yaw, speed, motion_intensity)
+        )
+
+        time.sleep(0.2)
+
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        break
+
