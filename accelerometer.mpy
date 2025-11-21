@@ -1,0 +1,14 @@
+import imu
+import time
+
+print("KT2 IMU — live accelerometer data (shake it like a baby to read the data)\n")
+
+while True:
+    try:
+        ax, ay, az = imu.get_acc()
+        print("ACC: X=%6.3f  Y=%6.3f  Z=%6.3f" % (ax, ay, az))
+        time.sleep(0.2)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        break
+
