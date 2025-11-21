@@ -1,0 +1,18 @@
+import imu, time, math
+
+print("KT2 IMU — activity/speedometer demo, to see how fast you can toss this fucking thing into a wall\n")
+
+def magnitude(x, y, z):
+    return math.sqrt(x*x + y*y + z*z)
+
+while True:
+    try:
+        ax, ay, az = imu.get_acc()
+        # subtract gravity (approx 1g) to get net motion
+        motion = abs(magnitude(ax, ay, az) - 1.0)
+        print("Motion intensity:", motion)
+        time.sleep(0.2)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        break
+
