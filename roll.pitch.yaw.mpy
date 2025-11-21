@@ -1,0 +1,14 @@
+import imu
+import time
+
+print("KT2 IMU — live orientation monitor (roll, pitch, yaw) Lean the shit out of the little fucker\n")
+
+while True:
+    try:
+        roll, pitch, yaw = imu.get_rpy()
+        print("ROLL=%7.2f°  PITCH=%7.2f°  YAW=%7.2f°" %
+              (roll, pitch, yaw))
+        time.sleep(0.2)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        break
