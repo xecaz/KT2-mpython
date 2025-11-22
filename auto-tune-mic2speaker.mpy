@@ -1,0 +1,266 @@
+# KT2 I2S -> NS4168 autotuner using on-board mic feedback (GPIO16)
+# Plays 1 kHz tone variants, listens on mic, picks strongest Goertzel magnitude.
+
+from machine import I2S, Pin, ADC
+import time, math, struct, ujson
+
+# === Hardware constants (confirmed earlier) ===
+PIN_BCLK  = 0      # I2S bit clock
+PIN_LRCLK = 42     # I2S word select (LRCLK)
+PIN_SDOUT = 45     # I2S data out to amp
+MIC_GPIO  = 16     # on-board mic (ADC) we detected
+
+# === Tone parameters ===
+FS         = 8000          # Hz
+TONE_F     = 1000          # Hz
+TONE_MS    = 220           # tone length per variant
+AMP        = 16000         # int16 amplitude (avoid clipping)
+
+# === Mic capture parameters ===
+MIC_MS     = 260           # record window after tone
+MIC_FS     = 4000          # target ADC sample rate (approx)
+MIC_N      = min(1024, int(MIC_MS * MIC_FS / 1000) or 512)
+
+# === Variant grid to explore ===
+BIT_SHIFTS    = [-1, 0, +1]     # arithmetic shift on 16b samples
+BYTESWAPS     = [False, True]   # swap 2 bytes within each 16b sample
+PAD_BYTES     = [0, 2, 4]       # zero pad at start (alignment nibbles)
+DUMMY_WRITES  = [0, 1]          # optional 1x dummy write of silence
+
+# === Utility: synth base 1 kHz tone (little-endian 16-bit mono) ===
+def synth_tone(fs, freq, ms, amp):
+    n = int(fs * ms / 1000)
+    ba = bytearray(2 * n)
+    mv = memoryview(ba)
+    # 2*pi*f/fs
+    w = 2.0 * math.pi * freq / fs
+    for i in range(n):
+        s = int(amp * math.sin(w * i))
+        struct.pack_into("<h", mv, 2 * i, s)
+    return ba
+
+BASE_TONE = synth_tone(FS, TONE_F, TONE_MS, AMP)
+SILENCE_1K = bytes(1024)
+
+# === Output transforms ===
+def apply_byteswap(buf):
+    out = bytearray(len(buf))
+    out_mv = memoryview(out)
+    mv = memoryview(buf)
+    for i in range(0, len(buf), 2):
+        b0 = mv[i]
+        b1 = mv[i+1]
+        out_mv[i]   = b1
+        out_mv[i+1] = b0
+    return out
+
+def apply_shift(buf, shift):
+    if shift == 0:
+        return buf
+    out = bytearray(len(buf))
+    out_mv = memoryview(out)
+    mv = memoryview(buf)
+    for i in range(0, len(buf), 2):
+        s, = struct.unpack_from("<h", mv, i)
+        if shift > 0:
+            v = s << shift
+        else:
+            # arithmetic right shift for int16
+            v = s >> (-shift)
+        # clip to int16
+        if v > 32767: v = 32767
+        if v < -32768: v = -32768
+        struct.pack_into("<h", out_mv, i, v)
+    return out
+
+def apply_pad(buf, pad_bytes):
+    if pad_bytes <= 0:
+        return buf
+    return (b"\x00" * pad_bytes) + buf
+
+# === Mic capture & Goertzel at ~1 kHz ===
+def mic_capture_and_score(gpio=MIC_GPIO, ms=MIC_MS, fs=MIC_FS, n=MIC_N, target_hz=TONE_F):
+    # Init ADC if supported on this GPIO
+    try:
+        adc = ADC(Pin(gpio))
+    except Exception as e:
+        print(f"  [mic] ADC init failed on GPIO{gpio}: {e}")
+        return 0.0, False
+
+    # Use default atten; we just need relative power.
+    # Timing loop
+    period_us = int(1_000_000 / fs)
+    vals = [0] * n
+    start = time.ticks_us()
+    next_t = start
+    for i in range(n):
+        # Busy-wait to approximate fs
+        while time.ticks_diff(time.ticks_us(), next_t) < 0:
+            pass
+        try:
+            v = adc.read()
+        except Exception:
+            v = 0
+        vals[i] = v
+        next_t = time.ticks_add(next_t, period_us)
+
+    # Stats
+    mean = sum(vals) / n
+    var  = sum((v - mean) * (v - mean) for v in vals) / n
+    rms  = math.sqrt(var)
+
+    # basic clipping heuristic (8-bit-ish converters often sit 0..255-ish)
+    clipped = (max(vals) >= 255) or (min(vals) <= 0)
+
+    # Goertzel
+    # k = round(N * f / fs) ; use exact omega for that k
+    k = int(0.5 + (n * target_hz) / fs)
+    omega = (2.0 * math.pi * k) / n
+    coeff = 2.0 * math.cos(omega)
+
+    s_prev = 0.0
+    s_prev2 = 0.0
+    for v in vals:
+        x = v - mean  # DC remove
+        s = x + coeff * s_prev - s_prev2
+        s_prev2 = s_prev
+        s_prev  = s
+    # Magnitude
+    mag = math.sqrt(s_prev2 * s_prev2 + s_prev * s_prev - coeff * s_prev * s_prev2)
+
+    # Normalize by N to keep magnitudes comparable across tiny rate drift
+    score = mag / n
+
+    # Debug one-liner
+    print("  [mic] samples=%d  mean=%.1f  rms=%.2f  k=%d  score=%.5f  clipped=%s"
+          % (n, mean, rms, k, score, clipped))
+    return score, clipped
+
+# === Single-variant playback ===
+def play_variant(bit_shift, do_byteswap, pad_bytes, dummy_writes):
+    # Prepare buffer
+    buf = BASE_TONE
+    if do_byteswap:
+        buf = apply_byteswap(buf)
+    if bit_shift != 0:
+        buf = apply_shift(buf, bit_shift)
+    if pad_bytes:
+        buf = apply_pad(buf, pad_bytes)
+
+    # I2S open
+    audio = None
+    try:
+        audio = I2S(
+            0,
+            sck=Pin(PIN_BCLK),
+            ws=Pin(PIN_LRCLK),
+            sd=Pin(PIN_SDOUT),
+            mode=I2S.TX,
+            bits=16,
+            format=I2S.MONO,
+            rate=FS,
+            ibuf=4096,
+        )
+        # Let clocks settle a hair
+        time.sleep_ms(30)
+
+        # Optional dummy write
+        for _ in range(dummy_writes):
+            audio.write(SILENCE_1K)
+
+        # Write tone twice to give the mic a stable window
+        total = 0
+        for _ in range(2):
+            off = 0
+            mv = memoryview(buf)
+            while off < len(buf):
+                w = audio.write(mv[off:])
+                if not w:
+                    w = 0
+                off += w
+                total += w
+        # Small wait before mic sampling
+        time.sleep_ms(10)
+    except Exception as e:
+        print("  [play] ERROR:", e)
+    finally:
+        # Close I2S quickly so RX sampling isn’t blocked
+        if audio:
+            try:
+                audio.deinit()
+            except Exception:
+                pass
+    return
+
+# === Grid search ===
+def run_autotune():
+    results = []
+
+    print("\n=== KT2 Audio Autotune (1 kHz @ 8 kHz, mic GPIO%d) ===" % MIC_GPIO)
+    print("Variants: shifts=%s  byteswap=%s  pad=%s  dummy=%s"
+          % (BIT_SHIFTS, BYTESWAPS, PAD_BYTES, DUMMY_WRITES))
+    print("Scoring each variant by mic 1 kHz magnitude...")
+
+    combo_id = 0
+    for sh in BIT_SHIFTS:
+        for sw in BYTESWAPS:
+            for pad in PAD_BYTES:
+                for dummy in DUMMY_WRITES:
+                    combo_id += 1
+                    print("\n--- Variant #%d  shift=%+d  byteswap=%s  pad=%d  dummy=%d ---"
+                          % (combo_id, sh, sw, pad, dummy))
+
+                    # Play it
+                    play_variant(sh, sw, pad, dummy)
+
+                    # Listen & score
+                    sc, clipped = mic_capture_and_score()
+
+                    results.append({
+                        "shift": sh,
+                        "byteswap": sw,
+                        "pad": pad,
+                        "dummy": dummy,
+                        "score": sc,
+                        "clipped": bool(clipped),
+                    })
+
+                    # brief breather between tries
+                    time.sleep_ms(80)
+
+    # Rank
+    results.sort(key=lambda r: r["score"], reverse=True)
+
+    print("\n=== Top results (by score) ===")
+    for i, r in enumerate(results[:8], 1):
+        print(" %2d) score=%.5f  shift=%+d  swap=%s  pad=%d  dummy=%d  clipped=%s"
+              % (i, r["score"], r["shift"], r["byteswap"], r["pad"], r["dummy"], r["clipped"]))
+
+    # Persist best
+    best = results[0] if results else None
+    if best:
+        cfg = {
+            "fs": FS,
+            "tone_hz": TONE_F,
+            "bit_shift": best["shift"],
+            "byteswap": best["byteswap"],
+            "pad_bytes": best["pad"],
+            "dummy_writes": best["dummy"],
+            "score": best["score"],
+            "mic_gpio": MIC_GPIO,
+            "note": "Autotuned for your current firmware/board; reuse these for WAV playback.",
+        }
+        try:
+            with open("/my/audio_autotune.json", "w") as f:
+                ujson.dump(cfg, f)
+            print("\nSaved best config to /my/audio_autotune.json")
+        except Exception as e:
+            print("\nCould not save /my/audio_autotune.json:", e)
+    else:
+        print("\nNo results gathered — check I2S/MIC setup and try again.")
+
+    return results
+
+# === Kick it ===
+if __name__ == "__main__":
+    _ = run_autotune()
