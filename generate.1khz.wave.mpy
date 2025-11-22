@@ -1,0 +1,85 @@
+# Generate a 1 kHz, 8 kHz-sampled, 16-bit mono WAV (5 seconds)
+# Saves to: /my/1khz-8k-16bit-mono.wav
+
+import math, struct
+
+FILEPATH = "/my/1khz-8k-16bit-mono.wav"
+SR       = 8000          # sample rate (Hz)
+FREQ     = 1000          # tone frequency (Hz)
+DUR      = 5.0           # seconds
+AMP      = 0.60          # 0.0..1.0 (safe headroom)
+BITS     = 16
+CHAN     = 1
+
+def write_wav_sine(path, sr, freq, dur, amp, bits=16, chan=1, block=512):
+    total_samples = int(sr * dur)
+    bytes_per_sample = bits // 8
+    byte_rate = sr * chan * bytes_per_sample
+    block_align = chan * bytes_per_sample
+    data_size = total_samples * chan * bytes_per_sample
+    riff_size = 36 + data_size
+
+    # WAV header (PCM, little-endian)
+    hdr = bytearray(44)
+    # RIFF chunk
+    hdr[0:4]   = b"RIFF"
+    struct.pack_into("<I", hdr, 4,  riff_size)
+    hdr[8:12]  = b"WAVE"
+    # fmt subchunk
+    hdr[12:16] = b"fmt "
+    struct.pack_into("<I", hdr, 16, 16)            # Subchunk1Size (PCM)
+    struct.pack_into("<H", hdr, 20, 1)             # AudioFormat = 1 (PCM)
+    struct.pack_into("<H", hdr, 22, chan)          # NumChannels
+    struct.pack_into("<I", hdr, 24, sr)            # SampleRate
+    struct.pack_into("<I", hdr, 28, byte_rate)     # ByteRate
+    struct.pack_into("<H", hdr, 32, block_align)   # BlockAlign
+    struct.pack_into("<H", hdr, 34, bits)          # BitsPerSample
+    # data subchunk
+    hdr[36:40] = b"data"
+    struct.pack_into("<I", hdr, 40, data_size)     # Subchunk2Size
+
+    # Write header + samples
+    with open(path, "wb") as f:
+        f.write(hdr)
+        # amplitude in 16-bit range
+        max_i16 = 32767
+        A = int(max_i16 * max(0.0, min(1.0, amp)))
+        twopi_f_sr = 2 * math.pi * freq / sr
+
+        # stream out in small blocks to avoid RAM spikes
+        t = 0
+        buf = bytearray(block * bytes_per_sample)  # mono
+        for start in range(0, total_samples, block):
+            n = block
+            if start + n > total_samples:
+                n = total_samples - start
+            # fill buffer
+            mv = memoryview(buf)[: n * bytes_per_sample]
+            off = 0
+            for i in range(n):
+                s = int(A * math.sin(twopi_f_sr * (start + i)))
+                struct.pack_into("<h", mv, off, s)
+                off += 2
+            f.write(mv)
+
+    return path, total_samples, data_size
+
+# ---- run generator ----
+path, nsamples, datasz = write_wav_sine(FILEPATH, SR, FREQ, DUR, AMP, BITS, CHAN)
+print("WAV generated:")
+print("  path:", path)
+print("  samples:", nsamples)
+print("  data bytes:", datasz)
+
+# ---- verify header quickly ----
+with open(FILEPATH, "rb") as f:
+    hdr = f.read(44)
+    if len(hdr) != 44:
+        raise RuntimeError("Header read failed.")
+    nch  = struct.unpack("<H", hdr[22:24])[0]
+    rate = struct.unpack("<I", hdr[24:28])[0]
+    bps  = struct.unpack("<H", hdr[34:36])[0]
+    dsz  = struct.unpack("<I", hdr[40:44])[0]
+    print("WAV header check ->",
+          "{}ch {}Hz {}bit, data={}".format(nch, rate, bps, dsz))
+
