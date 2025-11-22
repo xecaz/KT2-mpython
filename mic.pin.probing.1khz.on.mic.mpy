@@ -1,0 +1,70 @@
+# Mic probe on GPIO16 with debug prints
+from machine import ADC, Pin
+import time, math
+
+PIN = 16
+FS = 8000
+N = 1024
+F0 = 1000
+
+print("Initializing ADC...")
+adc = ADC(Pin(PIN))
+try:
+    adc.atten(ADC.ATTN_11DB)
+except Exception as e:
+    print("atten setup failed:", e)
+
+print("Precomputing coefficients...")
+k = int(0.5 + (N * F0) / FS)
+w = (2.0 * math.pi / N) * k
+cos_w = math.cos(w)
+coeff = 2.0 * cos_w
+
+def sample_block():
+    print("Starting sampling...")
+    buf = []
+    period_us = int(1_000_000 / FS)
+    t = time.ticks_us()
+    for i in range(N):
+        if i % 100 == 0:
+            print(f"  sample {i}")
+        t = time.ticks_add(t, period_us)
+        try:
+            v = adc.read()
+        except Exception as e:
+            print("ADC read failed:", e)
+            break
+        buf.append(v)
+        while time.ticks_diff(t, time.ticks_us()) > 0:
+            pass
+    print("Sampling complete, got", len(buf), "samples")
+    return buf
+
+def stats_and_goertzel(x):
+    print("Computing stats...")
+    n = len(x)
+    mean = sum(x) / n
+    var = sum((v - mean) ** 2 for v in x) / n
+    rms = math.sqrt(var)
+    peak = max(x) - min(x)
+    clipped = (x.count(0) > n*0.02)
+    print("Computing Goertzel...")
+    s_prev = 0.0
+    s_prev2 = 0.0
+    for v in x:
+        y = v - mean
+        s = y + coeff * s_prev - s_prev2
+        s_prev2 = s_prev
+        s_prev = s
+    real = s_prev - s_prev2 * cos_w
+    imag = s_prev2 * math.sin(w)
+    mag = math.sqrt(real*real + imag*imag) / n
+    return mean, rms, peak, mag, clipped
+
+print("Mic probe on GPIO%d — play 1 kHz tone nearby" % PIN)
+buf = sample_block()
+print("Processing...")
+mean, rms, peak, go_mag, clipped = stats_and_goertzel(buf)
+print(f"samples={len(buf)} mean={mean:.1f} rms={rms:.2f} peak_span={peak} goertzel_mag={go_mag:.4f} clipped={clipped}")
+print("First 40:", buf[:40])
+
