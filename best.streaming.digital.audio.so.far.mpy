@@ -1,0 +1,113 @@
+from machine import I2S, Pin
+import usocket, struct
+import time
+
+# ===== Pins confirmed working from tone tests =====
+PIN_BCLK = 0
+PIN_LRCLK = 42
+PIN_SDOUT = 45
+
+URL = "http://samples.ffmpeg.org/A-codecs/wavpcm/8khz-16bit-mono.wav"
+
+CHUNK = 1024       # raw network block
+FRAME = 512        # aligned DMA block (must be <= CHUNK)
+
+net_buf = bytearray(CHUNK)
+aligned = bytearray(FRAME)
+
+def http_stream(url):
+    proto, rest = url.split("://", 1)
+    hostport, path = rest.split("/", 1)
+    path = "/" + path
+    if ":" in hostport:
+        host, port = hostport.split(":")
+        port = int(port)
+    else:
+        host, port = hostport, 80
+
+    print("Connecting to", host)
+    addr = usocket.getaddrinfo(host, port)[0][-1]
+    s = usocket.socket()
+    s.connect(addr)
+
+    s.send("GET %s HTTP/1.0\r\nHost: %s\r\n\r\n" % (path, host))
+
+    # Skip HTTP headers
+    while True:
+        line = s.readline()
+        if line == b"\r\n":
+            break
+
+    return s
+
+def play_wav_from_url(url):
+    sock = http_stream(url)
+
+    # Read WAV header
+    hdr = sock.read(44)
+    if len(hdr) != 44:
+        print("Invalid WAV header")
+        return
+
+    num_channels = struct.unpack("<H", hdr[22:24])[0]
+    sample_rate = struct.unpack("<I", hdr[24:28])[0]
+    bits = struct.unpack("<H", hdr[34:36])[0]
+
+    print("WAV:", num_channels, "ch", sample_rate, "Hz", bits, "bit")
+
+    audio = I2S(
+        0,
+        sck=Pin(PIN_BCLK),
+        ws=Pin(PIN_LRCLK),
+        sd=Pin(PIN_SDOUT),
+        mode=I2S.TX,
+        bits=bits,
+        format=I2S.MONO,
+        rate=sample_rate,
+        ibuf=4096,
+    )
+
+    print("I2S ready, stabilizing clocks...")
+    time.sleep(0.05)
+
+    mv_net = memoryview(net_buf)
+    mv_align = memoryview(aligned)
+
+    print("Streaming...")
+
+    while True:
+        n = sock.readinto(mv_net)
+        if not n:
+            break
+
+        # n may be > FRAME, so break into chunks
+        ptr = 0
+        while ptr < n:
+            block = n - ptr
+            if block > FRAME:
+                block = FRAME
+
+            # Align block (must be multiple of 4)
+            block &= ~0x03
+            if block == 0:
+                ptr += 1
+                continue
+
+            mv_align[:block] = mv_net[ptr:ptr + block]
+
+            off = 0
+            while off < block:
+                w = audio.write(mv_align[off:block])
+                if not w:
+                    w = 0
+                off += w
+
+            ptr += block
+
+    print("Closing")
+    sock.close()
+    audio.deinit()
+    print("Done")
+
+play_wav_from_url(URL)
+
